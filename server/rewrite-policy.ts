@@ -73,6 +73,7 @@ export function getRewriteRuntimeEnvironment(): string {
 }
 
 export function isHostedRewriteEnvironment(runtimeEnvironment: string = getRewriteRuntimeEnvironment()): boolean {
+  if ((process.env.PROOF_SINGLE_REPLICA || '').trim() === 'true') return false;
   return runtimeEnvironment === 'production' || runtimeEnvironment === 'staging' || isRailwayHostedRuntime();
 }
 
