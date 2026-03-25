@@ -864,10 +864,15 @@ export async function applyAgentEditV2(
   }
 
   const blocks: BlockState[] = [];
+  const persistedMarkdownStripped = stripEphemeralCollabSpans(doc.markdown ?? '');
   const usingAuthoritativeFallback = authoritativeBase.base.source === 'live_yjs'
-    || authoritativeMarkdown !== stripEphemeralCollabSpans(doc.markdown ?? '');
-  if (usingAuthoritativeFallback) {
-    const persistedBase = parseMarkdownWithHtmlFallback(parser, stripEphemeralCollabSpans(doc.markdown ?? ''));
+    || authoritativeMarkdown !== persistedMarkdownStripped;
+  // Only run drift check when markdown content actually differs between persisted and live.
+  // When both are empty (e.g. new doc opened in browser), Yjs serialization may produce
+  // slightly different whitespace/structure causing false FRAGMENT_DIVERGENCE errors.
+  const markdownContentDiffers = authoritativeMarkdown.trim() !== persistedMarkdownStripped.trim();
+  if (usingAuthoritativeFallback && markdownContentDiffers) {
+    const persistedBase = parseMarkdownWithHtmlFallback(parser, persistedMarkdownStripped);
     if (!persistedBase.doc) {
       return {
         status: 500,
