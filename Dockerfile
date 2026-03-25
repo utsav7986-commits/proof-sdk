@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY . .
-RUN npm ci
+RUN npm install --legacy-peer-deps
 RUN npm run build
 
 RUN mkdir -p /data
