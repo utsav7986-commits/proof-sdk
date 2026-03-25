@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import { createServer } from 'http';
 import { WebSocketServer } from 'ws';
 import path from 'path';
@@ -38,6 +39,7 @@ function parseAllowedCorsOrigins(): Set<string> {
 
 async function main(): Promise<void> {
   const app = express();
+  app.use(compression());
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws' });
   wss.on('error', (error) => {
