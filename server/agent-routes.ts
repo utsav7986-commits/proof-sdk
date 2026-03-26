@@ -4071,7 +4071,7 @@ agentRoutes.post('/:slug/proof-ask', async (req: Request, res: Response) => {
   if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
 
   if (!PROOF_COMMAND_CENTER_URL) {
-    res.status(503).json({ success: false, error: 'PROOF_COMMAND_CENTER_URL not configured' });
+    res.status(400).json({ success: false, error: 'PROOF_COMMAND_CENTER_URL not configured on server' });
     return;
   }
 
@@ -4121,24 +4121,29 @@ agentRoutes.post('/:slug/proof-ask', async (req: Request, res: Response) => {
     return;
   }
 
-  // Write AI response to doc below the @proof block
-  const doc = getDocumentBySlug(slug);
-  if (!doc) { res.status(404).json({ success: false, error: 'Document not found' }); return; }
+  // Get current snapshot for base token and block list
+  const snapshotResult = await buildAgentSnapshot(slug);
+  if (snapshotResult.status >= 400) { res.status(snapshotResult.status).json(snapshotResult.body); return; }
 
-  const operations: unknown[] = [];
-  if (blockRef) {
-    operations.push({ op: 'insert_after', ref: blockRef, blocks: [{ markdown: aiResponse }] });
-  } else {
-    operations.push({ op: 'insert_after', ref: `b${doc.markdown?.split('\n\n').filter(Boolean).length || 1}`, blocks: [{ markdown: aiResponse }] });
-  }
+  const snapshotBody = snapshotResult.body as Record<string, unknown>;
+  const blocks = (snapshotBody.blocks as Array<{ ref: string }>) ?? [];
+  if (blocks.length === 0) { res.status(409).json({ success: false, error: 'Document has no blocks' }); return; }
+
+  const baseToken = (snapshotBody.mutationBase as { token?: string } | undefined)?.token;
+  if (!baseToken) { res.status(409).json({ success: false, error: 'Document not ready for mutations yet' }); return; }
+
+  // Find insert-after ref: prefer the blockRef sent by browser if valid, else last block
+  const insertRef = (blockRef && blocks.some(b => b.ref === blockRef))
+    ? blockRef
+    : blocks[blocks.length - 1].ref;
 
   const editResult = await applyAgentEditV2(slug, {
-    baseRevision: doc.revision,
-    operations,
+    baseToken,
+    operations: [{ op: 'insert_after', ref: insertRef, blocks: [{ markdown: aiResponse }] }],
     by,
   });
 
-  res.status(editResult.status).json({ success: true, ...editResult.body });
+  res.status(editResult.status).json({ success: editResult.status < 300, ...editResult.body });
 });
 
 agentRoutes.use(async (req: Request, res: Response) => {
