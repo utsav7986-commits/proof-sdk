@@ -131,7 +131,7 @@ function getStrictLiveClientCount(slug: string): number {
 
 async function getStrictLiveClientCountWithGrace(slug: string): Promise<number> {
   let breakdown = getActiveCollabClientBreakdown(slug);
-  if (!isHostedRewriteEnvironment()) return breakdown.exactEpochCount;
+  if (!isHostedRewriteEnvironment()) return breakdown.total;
   if (breakdown.total === 0 || breakdown.exactEpochCount > 0) return breakdown.total;
 
   const timeoutMs = parsePositiveInt(process.env.HOSTED_LIVE_DOC_GRACE_MS, 1500);
