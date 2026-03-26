@@ -4122,7 +4122,6 @@ agentRoutes.post('/:slug/proof-ask', async (req: Request, res: Response) => {
   }
 
   // Write AI response to doc below the @proof block
-  const { applyAgentEditV2 } = await import('./agent-edit-v2.js');
   const doc = getDocumentBySlug(slug);
   if (!doc) { res.status(404).json({ success: false, error: 'Document not found' }); return; }
 
