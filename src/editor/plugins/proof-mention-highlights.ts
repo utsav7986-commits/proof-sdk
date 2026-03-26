@@ -50,23 +50,58 @@ function injectMentionCSS(): void {
   document.head.appendChild(style);
 }
 
+// Map a text offset within a block's concatenated text back to a document position.
+// segments = [{text, from}] collected by walking inline children of the block.
+function resolveTextOffset(segments: Array<{ text: string; from: number }>, offset: number): number {
+  let accumulated = 0;
+  for (const seg of segments) {
+    if (offset <= accumulated + seg.text.length) {
+      return seg.from + (offset - accumulated);
+    }
+    accumulated += seg.text.length;
+  }
+  // offset is at or past the end — clamp to end of last segment
+  const last = segments[segments.length - 1];
+  return last ? last.from + last.text.length : 0;
+}
+
 function buildDecorations(doc: Parameters<typeof DecorationSet.create>[0], status: ProofMentionStatus): DecorationSet {
   const decorations: Decoration[] = [];
+  const title = status === 'idle' ? 'Click to send @proof request'
+    : status === 'processing' ? 'AI is thinking…'
+    : status === 'done' ? 'Response added below'
+    : 'Request failed';
+
   doc.descendants((node, pos) => {
-    if (!node.isText || !node.text) return;
+    // Only process block nodes that hold inline content (paragraphs, headings, etc.)
+    // @proof text may be split across multiple text nodes by author-tracking spans,
+    // so we match against the full concatenated block text rather than per-text-node.
+    if (!node.isBlock || !node.inlineContent) return;
+
+    // Collect text segments with their document start positions
+    const segments: Array<{ text: string; from: number }> = [];
+    node.forEach((child, childOffset) => {
+      if (child.isText && child.text) {
+        segments.push({ text: child.text, from: pos + 1 + childOffset });
+      }
+    });
+    if (segments.length === 0) return false;
+
+    const fullText = segments.map(s => s.text).join('');
     MENTION_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
-    while ((match = MENTION_RE.exec(node.text)) !== null) {
-      const from = pos + match.index;
-      const to = from + match[0].length;
+    while ((match = MENTION_RE.exec(fullText)) !== null) {
+      const from = resolveTextOffset(segments, match.index);
+      const to = resolveTextOffset(segments, match.index + match[0].length);
       decorations.push(
         Decoration.inline(from, to, {
           class: STATUS_CLASSES[status],
           style: STATUS_STYLES[status],
-          title: status === 'idle' ? 'Click to send @proof request' : status === 'processing' ? 'AI is thinking…' : status === 'done' ? 'Response added below' : 'Request failed',
+          title,
         })
       );
     }
+    return false; // children already handled above
   });
   return DecorationSet.create(doc, decorations);
 }
