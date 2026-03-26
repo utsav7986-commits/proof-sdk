@@ -12,6 +12,7 @@ let shareToken = '';
 
 const PROOF_MENTION_RE = /@proof\s+(.+)/i;
 let lastSeenText = '';
+let lastProcessedMention = ''; // prevents re-triggering after a response is inserted
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 let processing = false;
 
@@ -63,10 +64,15 @@ async function handleProofMention(view: EditorView, mention: string): Promise<vo
 
     setProofMentionStatus(view, res.ok ? 'done' : 'error');
 
-    // Reset to idle after 4 seconds so next @proof triggers again
+    if (res.ok) {
+      // Mark this mention as processed — same question won't re-trigger even after
+      // the doc text changes when the AI response is inserted below.
+      lastProcessedMention = mention;
+    }
+
+    // Reset decoration to idle after 4 seconds
     setTimeout(() => {
       setProofMentionStatus(view, 'idle');
-      lastSeenText = '';
     }, 4000);
   } catch (err) {
     console.warn('[proof] @proof request failed:', err);
@@ -83,10 +89,17 @@ function checkForProofMention(view: EditorView): void {
   lastSeenText = text;
 
   const match = text.match(PROOF_MENTION_RE);
-  if (!match) return;
+  if (!match) {
+    // @proof was removed — allow the same question to trigger again if retyped
+    lastProcessedMention = '';
+    return;
+  }
 
   const mention = match[1].trim();
   if (!mention) return;
+
+  // Skip if this exact question was already answered (prevents loops after response insertion)
+  if (mention === lastProcessedMention) return;
 
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
@@ -140,5 +153,6 @@ export function isAgentReady(): boolean {
 export function cleanupAgentIntegration(): void {
   if (debounceTimer) clearTimeout(debounceTimer);
   lastSeenText = '';
+  lastProcessedMention = '';
   processing = false;
 }
