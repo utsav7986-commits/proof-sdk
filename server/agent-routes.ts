@@ -4068,7 +4068,7 @@ const PROOF_COMMAND_CENTER_SECRET = (process.env.PROOF_COMMAND_CENTER_SECRET || 
 agentRoutes.post('/:slug/proof-ask', async (req: Request, res: Response) => {
   const slug = getSlug(req);
   if (!slug) { res.status(400).json({ success: false, error: 'Invalid slug' }); return; }
-  if (!checkAuth(req, res, slug, ['editor', 'owner_bot'])) return;
+  if (!checkAuth(req, res, slug, ['viewer', 'commenter', 'editor', 'owner_bot'])) return;
 
   if (!PROOF_COMMAND_CENTER_URL) {
     res.status(503).json({ success: false, error: 'PROOF_COMMAND_CENTER_URL not configured' });
