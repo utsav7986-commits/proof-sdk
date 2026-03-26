@@ -4137,9 +4137,17 @@ agentRoutes.post('/:slug/proof-ask', async (req: Request, res: Response) => {
     ? blockRef
     : blocks[blocks.length - 1].ref;
 
+  // Split response into blocks — parseSingleBlockMarkdown requires one block per entry
+  const responseBlocks = aiResponse
+    .split(/\n{2,}/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(markdown => ({ markdown }));
+  if (responseBlocks.length === 0) responseBlocks.push({ markdown: aiResponse.trim() || '*(no response)*' });
+
   const editResult = await applyAgentEditV2(slug, {
     baseToken,
-    operations: [{ op: 'insert_after', ref: insertRef, blocks: [{ markdown: aiResponse }] }],
+    operations: [{ op: 'insert_after', ref: insertRef, blocks: responseBlocks }],
     by,
   });
 
