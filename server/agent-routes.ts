@@ -4058,6 +4058,90 @@ agentRoutes.post('/:slug/events/ack', (req: Request, res: Response) => {
   res.json({ success: true, acked });
 });
 
+// ─── POST /:slug/proof-ask ─────────────────────────────────────────────────────
+// Handles @proof mention in a doc: sends prompt to the command center supervisor,
+// writes the AI response as a new block below the mention.
+
+const PROOF_COMMAND_CENTER_URL = (process.env.PROOF_COMMAND_CENTER_URL || '').trim();
+const PROOF_COMMAND_CENTER_SECRET = (process.env.PROOF_COMMAND_CENTER_SECRET || '').trim();
+
+agentRoutes.post('/:slug/proof-ask', async (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  if (!slug) { res.status(400).json({ success: false, error: 'Invalid slug' }); return; }
+  if (!checkAuth(req, res, slug, ['editor', 'owner_bot'])) return;
+
+  if (!PROOF_COMMAND_CENTER_URL) {
+    res.status(503).json({ success: false, error: 'PROOF_COMMAND_CENTER_URL not configured' });
+    return;
+  }
+
+  const payload = asPayload(req.body);
+  const mention = typeof payload.mention === 'string' ? payload.mention.trim() : '';
+  const blockRef = typeof payload.blockRef === 'string' ? payload.blockRef.trim() : null;
+  const model = typeof payload.model === 'string' ? payload.model.trim() : 'claude-sonnet-4-6';
+  const by = typeof payload.by === 'string' ? payload.by.trim() : 'proof:ai';
+
+  if (!mention) { res.status(400).json({ success: false, error: 'mention is required' }); return; }
+
+  // Build context: read the current doc snapshot for context
+  let docContext = '';
+  try {
+    const doc = getDocumentBySlug(slug);
+    if (doc?.markdown) {
+      docContext = `\nDocument context:\n\`\`\`\n${doc.markdown.slice(0, 4000)}\n\`\`\`\n\n`;
+    }
+  } catch { /* best-effort */ }
+
+  const prompt = `You are a collaborative AI writing assistant embedded in a document editor. Respond concisely and helpfully to the following request from the document author.${docContext}Request: ${mention}\n\nRespond with plain markdown. Be concise. Do not repeat the question.`;
+
+  // Call command center supervisor
+  let aiResponse: string;
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (PROOF_COMMAND_CENTER_SECRET) headers['Authorization'] = `Bearer ${PROOF_COMMAND_CENTER_SECRET}`;
+    const upstream = await fetch(`${PROOF_COMMAND_CENTER_URL}/api/proof-ask`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ prompt, model, docSlug: slug }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    if (!upstream.ok) {
+      const err = await upstream.text();
+      res.status(502).json({ success: false, error: `Supervisor error: ${err}` });
+      return;
+    }
+    const data = await upstream.json() as { ok?: boolean; response?: string; error?: string };
+    if (!data.ok || typeof data.response !== 'string') {
+      res.status(502).json({ success: false, error: data.error || 'No response from supervisor' });
+      return;
+    }
+    aiResponse = data.response.trim();
+  } catch (err) {
+    res.status(502).json({ success: false, error: `Failed to reach command center: ${String(err)}` });
+    return;
+  }
+
+  // Write AI response to doc below the @proof block
+  const { applyAgentEditV2 } = await import('./agent-edit-v2.js');
+  const doc = getDocumentBySlug(slug);
+  if (!doc) { res.status(404).json({ success: false, error: 'Document not found' }); return; }
+
+  const operations: unknown[] = [];
+  if (blockRef) {
+    operations.push({ op: 'insert_after', ref: blockRef, blocks: [{ markdown: aiResponse }] });
+  } else {
+    operations.push({ op: 'insert_after', ref: `b${doc.markdown?.split('\n\n').filter(Boolean).length || 1}`, blocks: [{ markdown: aiResponse }] });
+  }
+
+  const editResult = await applyAgentEditV2(slug, {
+    baseRevision: doc.revision,
+    operations,
+    by,
+  });
+
+  res.status(editResult.status).json({ success: true, ...editResult.body });
+});
+
 agentRoutes.use(async (req: Request, res: Response) => {
   const slug = getSlug(req);
   const method = req.method.toUpperCase();
