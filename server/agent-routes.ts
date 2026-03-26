@@ -17,13 +17,16 @@ import {
   applyAgentCursorHintToLoadedCollab,
   verifyCanonicalDocumentInLoadedCollab,
   getCollabRuntime,
+  getCollabHealthState,
   getCanonicalReadableDocument,
   getLoadedCollabLastChangedAt,
   getLoadedCollabMarkdownForVerification,
   getLoadedCollabMarkdownFromFragment,
   getLoadedCollabFragmentTextHash,
+  hasLoadedCollabDoc,
   hasAgentPresenceInLoadedCollab,
   isCanonicalReadMutationReady,
+  isCollabRuntimeReady,
   invalidateLoadedCollabDocument,
   removeAgentPresenceFromLoadedCollab,
   invalidateLoadedCollabDocumentAndWait,
@@ -35,6 +38,7 @@ import {
   traceDegradedCollabRead,
   stripEphemeralCollabSpans,
   verifyAuthoritativeMutationBaseStable,
+  getLiveCollabBlockStatus,
 } from './collab.js';
 import { canonicalizeStoredMarks, type StoredMark } from '../src/formats/marks.js';
 import {
@@ -1963,6 +1967,52 @@ agentRoutes.use((req: Request, res: Response, next) => {
   next();
 });
 
+agentRoutes.get('/:slug/collab-debug', async (req: Request, res: Response) => {
+  const slug = getSlug(req);
+  if (!slug) { res.status(400).json({ error: 'Invalid slug' }); return; }
+
+  const doc = getDocumentBySlug(slug);
+  const breakdown = getActiveCollabClientBreakdown(slug);
+  const runtime = getCollabRuntime();
+  const health = getCollabHealthState();
+  const blockStatus = getLiveCollabBlockStatus(slug);
+  const hasLoaded = hasLoadedCollabDoc(slug);
+  const collabReady = isCollabRuntimeReady();
+  const isHosted = isHostedRewriteEnvironment();
+
+  const authoritativeBase = await resolveAuthoritativeMutationBase(slug, { liveRequired: false }).catch((e: unknown) => ({ ok: false, error: String(e) }));
+
+  res.json({
+    timestamp: new Date().toISOString(),
+    slug,
+    doc: doc ? {
+      revision: doc.revision,
+      access_epoch: doc.access_epoch,
+      live_collab_seen_at: (doc as unknown as Record<string, unknown>).live_collab_seen_at ?? null,
+      live_collab_access_epoch: (doc as unknown as Record<string, unknown>).live_collab_access_epoch ?? null,
+      updated_at: doc.updated_at,
+      mutationReady: (doc as unknown as Record<string, unknown>).mutation_ready ?? null,
+    } : null,
+    collab: {
+      runtimeEnabled: runtime.enabled,
+      collabReady,
+      isHostedEnvironment: isHosted,
+      hasLoadedDoc: hasLoaded,
+      blockStatus,
+    },
+    health,
+    clientBreakdown: breakdown,
+    strictLiveClientCount: isHosted ? breakdown.total : breakdown.exactEpochCount,
+    authoritativeBase: 'ok' in authoritativeBase && authoritativeBase.ok
+      ? { ok: true, source: (authoritativeBase as unknown as { base: AuthoritativeMutationBase }).base?.source, token: String((authoritativeBase as unknown as { base: AuthoritativeMutationBase }).base?.token ?? '').slice(0, 20) + '...' }
+      : { ok: false, error: (authoritativeBase as Record<string, unknown>).reason ?? (authoritativeBase as Record<string, unknown>).error },
+    env: {
+      PROOF_SINGLE_REPLICA: process.env.PROOF_SINGLE_REPLICA ?? null,
+      COLLAB_SINGLE_WRITER_EDIT: process.env.COLLAB_SINGLE_WRITER_EDIT ?? null,
+    },
+  });
+});
+
 agentRoutes.get('/:slug/state', async (req: Request, res: Response) => {
   const slug = getSlug(req);
   if (!slug) {
@@ -2304,12 +2354,48 @@ agentRoutes.post('/:slug/edit/v2', async (req: Request, res: Response) => {
   const replay = await maybeReplayIdempotentMutation(req, res, slug, mutationRoute, routeKey);
   if (replay.handled) return;
 
+  const _debugBreakdown = getActiveCollabClientBreakdown(slug);
+  const _debugDoc = getDocumentBySlug(slug);
+  console.log('[TRACE edit/v2] pre-write state', {
+    slug,
+    ts: new Date().toISOString(),
+    clientBreakdown: {
+      exactEpochCount: _debugBreakdown.exactEpochCount,
+      anyEpochCount: _debugBreakdown.anyEpochCount,
+      documentLeaseExactCount: _debugBreakdown.documentLeaseExactCount,
+      documentLeaseAnyEpochCount: _debugBreakdown.documentLeaseAnyEpochCount,
+      recentLeaseCount: _debugBreakdown.recentLeaseCount,
+      total: _debugBreakdown.total,
+      accessEpoch: _debugBreakdown.accessEpoch,
+    },
+    docAccessEpoch: _debugDoc?.access_epoch ?? null,
+    docRevision: _debugDoc?.revision ?? null,
+    liveCollabSeenAt: (_debugDoc as unknown as Record<string, unknown>)?.live_collab_seen_at ?? null,
+    liveCollabAccessEpoch: (_debugDoc as unknown as Record<string, unknown>)?.live_collab_access_epoch ?? null,
+    isHosted: isHostedRewriteEnvironment(),
+    singleWriterEnabled: isSingleWriterEditEnabled(),
+    hasLoadedDoc: hasLoadedCollabDoc(slug),
+    collabReady: isCollabRuntimeReady(),
+  });
+
   const result = await applyAgentEditV2(slug, req.body, {
     idempotencyKey: replay.idempotencyKey ?? undefined,
     idempotencyRoute: replay.reservation?.route ?? undefined,
     onCommitted: async (committed) => {
       if (!isRecord(committed.body)) return;
       storeIdempotentMutationResult(replay, mutationRoute, slug, committed.status, committed.body);
+    },
+  });
+
+  const _debugPostBreakdown = getActiveCollabClientBreakdown(slug);
+  console.log('[TRACE edit/v2] post-write result', {
+    slug,
+    ts: new Date().toISOString(),
+    status: result.status,
+    collabStatus: isRecord(result.body) ? (result.body as Record<string, unknown>).collab : null,
+    clientBreakdownPost: {
+      exactEpochCount: _debugPostBreakdown.exactEpochCount,
+      total: _debugPostBreakdown.total,
     },
   });
   if (result.status >= 200 && result.status < 300 && isRecord(result.body)) {
