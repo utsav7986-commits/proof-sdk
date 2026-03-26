@@ -2556,6 +2556,9 @@ class ProofEditorImpl implements ProofEditor {
       }
       if (!this.collabEnabled) {
         this.scheduleShareDocumentUpdatedRefresh();
+      } else if (message.source === 'proof-ask') {
+        // AI wrote to SQL; Yjs may not have confirmed sync — force reload from canonical state
+        this.scheduleShareDocumentUpdatedRefresh(true);
       }
       return;
     }

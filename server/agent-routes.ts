@@ -4151,6 +4151,12 @@ agentRoutes.post('/:slug/proof-ask', async (req: Request, res: Response) => {
     by,
   });
 
+  // Broadcast document.updated regardless of collab confirmation status — the SQL write
+  // succeeded (success: true) so connected browsers need to resync from canonical state.
+  if (editResult.status < 300) {
+    broadcastToRoom(slug, { type: 'document.updated', source: 'proof-ask', timestamp: new Date().toISOString() });
+  }
+
   res.status(editResult.status).json({ success: editResult.status < 300, ...editResult.body });
 });
 
