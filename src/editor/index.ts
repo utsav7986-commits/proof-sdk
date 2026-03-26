@@ -80,6 +80,7 @@ import {
   resetShareRuntimeCapabilities,
 } from './plugins/share-permissions';
 import { findHighlightsPlugin, setFindHighlights, clearFindHighlights } from './plugins/find-highlights';
+import { proofMentionHighlightsPlugin } from './plugins/proof-mention-highlights';
 import { arrowCommentPlugin } from './plugins/arrow-comment';
 import { markdownLinkClickPlugin } from './plugins/markdown-link-click';
 import { mermaidDiagramsPlugin } from './plugins/mermaid-diagrams';
@@ -1210,6 +1211,7 @@ class ProofEditorImpl implements ProofEditor {
       .use(markSelectionBarPlugin)
       .use(arrowCommentPlugin)
       .use(findHighlightsPlugin)
+      .use(proofMentionHighlightsPlugin)
       .use(shareContentFilterPlugin)
       .use(taskCheckboxesPlugin)
       .use(mermaidDiagramsPlugin)

@@ -1,4 +1,5 @@
 import type { EditorView } from '@milkdown/kit/prose/view';
+import { setProofMentionStatus } from '../editor/plugins/proof-mention-highlights';
 
 // ── Config ─────────────────────────────────────────────────────────────────────
 
@@ -43,11 +44,13 @@ async function handleProofMention(view: EditorView, mention: string): Promise<vo
     }
   });
 
+  setProofMentionStatus(view, 'processing');
+
   try {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (token) headers['x-share-token'] = token;
 
-    await fetch(`/api/agent/${slug}/proof-ask`, {
+    const res = await fetch(`/api/agent/${slug}/proof-ask`, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -57,8 +60,18 @@ async function handleProofMention(view: EditorView, mention: string): Promise<vo
         by: agentBy,
       }),
     });
+
+    setProofMentionStatus(view, res.ok ? 'done' : 'error');
+
+    // Reset to idle after 4 seconds so next @proof triggers again
+    setTimeout(() => {
+      setProofMentionStatus(view, 'idle');
+      lastSeenText = '';
+    }, 4000);
   } catch (err) {
     console.warn('[proof] @proof request failed:', err);
+    setProofMentionStatus(view, 'error');
+    setTimeout(() => setProofMentionStatus(view, 'idle'), 4000);
   } finally {
     processing = false;
   }
